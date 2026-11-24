@@ -649,7 +649,10 @@ class Client extends EventEmitter {
                 }
                 window.codeInterval = setInterval(async () => {
                     const state =
-                        window.require('WAWebSocketModel').Socket.state;
+                        window.require?.('WAWebSocketModel')?.Socket?.state ||
+                        (window.require?.('WAWebConnModel')?.Conn?.ref
+                            ? 'UNPAIRED'
+                            : null);
                     if (state != 'UNPAIRED' && state != 'UNPAIRED_IDLE') {
                         clearInterval(window.codeInterval);
                         return;
@@ -1394,7 +1397,7 @@ class Client extends EventEmitter {
      */
     async logout() {
         await this.pupPage.evaluate(() => {
-            return window.require('WAWebSocketModel').Socket.logout();
+            return window.require?.('WAWebSocketModel')?.Socket?.logout?.();
         });
         await this.pupBrowser.close();
 
@@ -2080,7 +2083,23 @@ class Client extends EventEmitter {
      */
     async getState() {
         return await this.pupPage.evaluate(() => {
-            return window.require('WAWebSocketModel').Socket.state ?? null;
+            const socketState =
+                window.require?.('WAWebSocketModel')?.Socket?.state;
+            if (socketState) {
+                return socketState;
+            }
+            if (window.require?.('WAWebConnModel')?.Conn?.ref) {
+                return 'UNPAIRED';
+            }
+            const meUser =
+                window
+                    .require?.('WAWebUserPrefsMeUser')
+                    ?.getMaybeMePnUser?.() ||
+                window.require?.('WAWebUserPrefsMeUser')?.getMaybeMeLidUser?.();
+            if (meUser) {
+                return 'CONNECTED';
+            }
+            return null;
         });
     }
 
@@ -2308,7 +2327,7 @@ class Client extends EventEmitter {
      */
     async resetState() {
         await this.pupPage.evaluate(() => {
-            window.require('WAWebSocketModel').Socket.reconnect();
+            window.require?.('WAWebSocketModel')?.Socket?.reconnect?.();
         });
     }
 
