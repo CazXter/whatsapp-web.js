@@ -138,20 +138,42 @@ class Client extends EventEmitter {
 
             const needAuthHandle = await this.pupPage.waitForFunction(
                 () => {
-                    const state =
-                        window.require?.('WAWebSocketModel')?.Socket?.state;
-                    if (
-                        !state ||
-                        state === 'OPENING' ||
-                        state === 'UNLAUNCHED' ||
-                        state === 'PAIRING'
-                    ) {
+                    try {
+                        const meUser =
+                            window
+                                .require?.('WAWebUserPrefsMeUser')
+                                ?.getMaybeMePnUser?.() ||
+                            window
+                                .require?.('WAWebUserPrefsMeUser')
+                                ?.getMaybeMeLidUser?.();
+                        if (meUser) {
+                            return { need: false, state: 'CONNECTED' };
+                        }
+
+                        const conn = window.require?.('WAWebConnModel')?.Conn;
+                        if (conn?.ref) {
+                            return { need: true, state: 'UNPAIRED' };
+                        }
+
+                        const state =
+                            window.require?.('WAWebSocketModel')?.Socket?.state;
+                        if (
+                            !state ||
+                            state === 'OPENING' ||
+                            state === 'UNLAUNCHED' ||
+                            state === 'PAIRING'
+                        ) {
+                            return false;
+                        }
+                        return {
+                            need:
+                                state === 'UNPAIRED' ||
+                                state === 'UNPAIRED_IDLE',
+                            state,
+                        };
+                    } catch {
                         return false;
                     }
-                    return {
-                        need: state === 'UNPAIRED' || state === 'UNPAIRED_IDLE',
-                        state,
-                    };
                 },
                 { timeout: authTimeout },
             );
@@ -259,13 +281,17 @@ class Client extends EventEmitter {
                             .Conn.on('change:ref', onRefChange); // future QR changes
 
                         // Remove QR listener once authentication succeeds
-                        window
-                            .require('WAWebSocketModel')
-                            .Socket.on('change:hasSynced', () => {
-                                window
-                                    .require('WAWebConnModel')
-                                    .Conn.off('change:ref', onRefChange);
-                            });
+                        try {
+                            window
+                                .require('WAWebSocketModel')
+                                ?.Socket?.on('change:hasSynced', () => {
+                                    window
+                                        .require('WAWebConnModel')
+                                        .Conn.off('change:ref', onRefChange);
+                                });
+                        } catch (ignoredError) {
+                            // WAWebSocketModel might not be available yet
+                        }
                     });
                 }
             }
@@ -388,60 +414,80 @@ class Client extends EventEmitter {
                 },
             );
             await this.pupPage.evaluate(() => {
-                const Socket = window.require('WAWebSocketModel').Socket;
-                const Cmd = window.require('WAWebCmd').Cmd;
+                let Socket = null;
+                try {
+                    Socket = window.require('WAWebSocketModel')?.Socket;
+                } catch (ignoredError) {
+                    // WAWebSocketModel might not be available yet
+                }
+                const Cmd = window.require('WAWebCmd')?.Cmd;
 
-                const listeners = [
-                    [
-                        Socket,
-                        'change:state',
-                        (_AppState, state) => {
-                            window.onAuthAppStateChangedEvent(state);
-                        },
-                    ],
-                    [
-                        Socket,
-                        'change:hasSynced',
-                        () => {
-                            window.onAppStateHasSyncedEvent();
-                        },
-                    ],
-                    [
-                        Cmd,
-                        'offline_progress_update_from_bridge',
-                        () => {
-                            window.onOfflineProgressUpdateEvent(
-                                window
-                                    .require('WAWebOfflineHandler')
-                                    .OfflineMessageHandler.getOfflineDeliveryProgress(),
-                            );
-                        },
-                    ],
-                    [
-                        Cmd,
-                        'logout',
-                        async () => {
-                            await window.onLogoutEvent();
-                        },
-                    ],
-                    [
-                        Cmd,
-                        'logout_from_bridge',
-                        async () => {
-                            await window.onLogoutEvent();
-                        },
-                    ],
-                ];
+                const listeners = [];
+                if (Socket) {
+                    listeners.push(
+                        [
+                            Socket,
+                            'change:state',
+                            (_AppState, state) => {
+                                window.onAuthAppStateChangedEvent(state);
+                            },
+                        ],
+                        [
+                            Socket,
+                            'change:hasSynced',
+                            () => {
+                                window.onAppStateHasSyncedEvent();
+                            },
+                        ],
+                    );
+                }
+                if (Cmd) {
+                    listeners.push(
+                        [
+                            Cmd,
+                            'offline_progress_update_from_bridge',
+                            () => {
+                                window.onOfflineProgressUpdateEvent(
+                                    window
+                                        .require('WAWebOfflineHandler')
+                                        .OfflineMessageHandler.getOfflineDeliveryProgress(),
+                                );
+                            },
+                        ],
+                        [
+                            Cmd,
+                            'logout',
+                            async () => {
+                                await window.onLogoutEvent();
+                            },
+                        ],
+                        [
+                            Cmd,
+                            'logout_from_bridge',
+                            async () => {
+                                await window.onLogoutEvent();
+                            },
+                        ],
+                    );
+                }
 
                 // Clean up old listeners to prevent accumulation on re-inject
                 if (window._wwjsListeners) {
                     for (const [obj, event, handler] of window._wwjsListeners) {
-                        obj.off(event, handler);
+                        try {
+                            obj.off(event, handler);
+                        } catch (ignoredError) {
+                            // ignore cleanup error
+                        }
                     }
                 }
 
                 for (const [obj, event, handler] of listeners) {
-                    obj.on(event, handler);
+                    try {
+                        obj.on(event, handler);
+                    } catch (ignoredError) {
+                        // ignore attach error
+                    }
                 }
                 window._wwjsListeners = listeners;
 
@@ -449,7 +495,7 @@ class Client extends EventEmitter {
                 // If hasSynced is already true, Backbone won't fire change:hasSynced (no transition).
                 // If hasSynced is false, the listener above will catch the future transition.
                 const storeInjected = typeof window.WWebJS !== 'undefined';
-                if (Socket.hasSynced === true && !storeInjected) {
+                if (Socket?.hasSynced === true && !storeInjected) {
                     window.onAppStateHasSyncedEvent();
                 }
             });
